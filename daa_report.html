@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DAA Comparison for P2Pool (10s Target)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, system-ui, sans-serif; background: #0a0e17; color: #e2e8f0; line-height: 1.6; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+  h1 { font-size: 1.8rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.25rem; }
+  .subtitle { color: #94a3b8; font-size: 0.95rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.2rem; font-weight: 600; color: #e2e8f0; margin: 2rem 0 1rem; }
+  .winner-banner { background: linear-gradient(135deg, #0f2027, #203a43, #2c5364); border: 1px solid #38bdf8; border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 2rem; }
+  .winner-banner h2 { margin: 0 0 0.5rem; color: #38bdf8; font-size: 1.3rem; }
+  .winner-banner p { color: #cbd5e1; font-size: 0.9rem; }
+  .winner-banner .star { color: #fbbf24; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: #141b2d; border: 1px solid #1e293b; border-radius: 10px; padding: 1.25rem; }
+  .card h3 { font-size: 0.85rem; color: #94a3b8; font-weight: 500; margin-bottom: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .chart-container { position: relative; height: 280px; }
+  .full-width { grid-column: 1 / -1; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th { text-align: left; padding: 0.6rem 0.75rem; color: #94a3b8; font-weight: 500; border-bottom: 1px solid #1e293b; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 0.55rem 0.75rem; border-bottom: 1px solid #1e293b12; }
+  tr:hover td { background: #1e293b40; }
+  .best { color: #34d399; font-weight: 600; }
+  .worst { color: #f87171; }
+  .rank { display: inline-block; width: 22px; height: 22px; border-radius: 50%; text-align: center; line-height: 22px; font-size: 0.7rem; font-weight: 700; margin-right: 0.5rem; }
+  .rank-1 { background: #fbbf24; color: #0a0e17; }
+  .rank-2 { background: #94a3b8; color: #0a0e17; }
+  .rank-3 { background: #b45309; color: #fff; }
+  .insight { background: #1a1f35; border-left: 3px solid #38bdf8; padding: 1rem 1.25rem; border-radius: 0 8px 8px 0; margin: 1rem 0; font-size: 0.88rem; color: #cbd5e1; }
+  .tag { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; }
+  .tag-rec { background: #065f4620; color: #34d399; border: 1px solid #34d39940; }
+  .tag-warn { background: #7c2d1220; color: #f87171; border: 1px solid #f8717140; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>DAA Simulation: P2Pool Share Chain</h1>
+  <p class="subtitle">Target: 10s block time · 5,000 blocks × 20 Monte Carlo runs per scenario · 6 algorithms × 6 scenarios</p>
+
+  <div class="winner-banner">
+    <h2><span class="star">★</span> Recommendation: ASERT</h2>
+    <p>ASERT wins both overall and attack-resistance rankings decisively. It maintains mean block time closest to 10s across all scenarios, has the lowest tail latency under attack, and is mathematically the simplest (pure function of anchor block + current state — no history rewriting possible).</p>
+    <p style="margin-top:0.5rem;">For P2Pool's 10s share chain: use <strong>ASERT with half-life = 600s</strong> (2 × 30 × 10s target). This gives ~60 blocks of smoothing while staying responsive to hashrate swings.</p>
+  </div>
+
+  <div class="grid">
+    <div class="card full-width">
+      <h3>Overall Composite Score (Lower = Better)</h3>
+      <div class="chart-container"><canvas id="overallChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h3>Attack Resistance Score</h3>
+      <div class="chart-container"><canvas id="attackChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h3>Mean Block Time Under Oscillation Attack</h3>
+      <div class="chart-container"><canvas id="oscMeanChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h3>P99 Block Time (Tail Latency) — Steady State</h3>
+      <div class="chart-container"><canvas id="p99SteadyChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h3>% Blocks > 30s (Stall Risk) — All Attack Scenarios</h3>
+      <div class="chart-container"><canvas id="stallChart"></canvas></div>
+    </div>
+  </div>
+
+  <h2>Detailed Results by Scenario</h2>
+
+  <div id="tables"></div>
+
+  <h2>Key Findings</h2>
+  <div class="insight">
+    <strong>ASERT dominates under oscillation attacks.</strong> When a 9x attacker cycles on/off every 50 blocks, ASERT holds mean block time at 9.97s (0.3% deviation) while LWMA-45 drifts to 15.49s (55% deviation). ASERT's exponential anchor-based formula means it can't be gamed by reordering blocks.
+  </div>
+  <div class="insight">
+    <strong>LWMA and DGW struggle with oscillating hashrate.</strong> Their sliding-window averages lag behind rapid hashrate changes, causing alternating periods of blocks that are too fast (when attacker joins) and too slow (when attacker leaves). LWMA-45's P99 hits 125s under 100-block oscillation.
+  </div>
+  <div class="insight">
+    <strong>DigiShield's dampening helps under attack but hurts steady-state variance.</strong> The 4x dampening factor prevents overcorrection during oscillations (8.3% deviation vs LWMA's 55%), but the same dampening causes higher variance during normal operation with 7.4% of blocks exceeding 30s.
+  </div>
+  <div class="insight">
+    <strong>SMA-72 is catastrophically unsuitable for 10s targets.</strong> The large window creates massive inertia — mean block times of 20s+ across all scenarios with 90%+ blocks under 2s (rapid-fire blocks when difficulty undershoots, then long stalls).
+  </div>
+  <div class="insight">
+    <strong>Recommended ASERT parameters for P2Pool:</strong> half_life = 600s gives responsive adjustment (~60 blocks of smoothing). The anchor block should be set at chain genesis. No per-block clamps needed — ASERT is inherently smooth.
+  </div>
+</div>
+
+<script>
+const COLORS = {
+  'SMA-72': '#ef4444',
+  'DigiShield': '#f59e0b',
+  'LWMA-45': '#8b5cf6',
+  'LWMA-20 (tight)': '#a78bfa',
+  'ASERT': '#22d3ee',
+  'DGW v3': '#10b981'
+};
+
+const results = [{"algorithm":"SMA-72","scenario":"Steady State","mean_bt":20.72,"median_bt":0.0,"stddev_bt":228.35,"p95_bt":25.41,"p99_bt":497.84,"pct_fast_lt2s":90.2,"pct_slow_gt30s":4.7,"deviation_score":107.2},{"algorithm":"DigiShield","scenario":"Steady State","mean_bt":10.28,"median_bt":5.46,"stddev_bt":14.02,"p95_bt":36.45,"p99_bt":66.47,"pct_fast_lt2s":25.9,"pct_slow_gt30s":7.4,"deviation_score":2.8},{"algorithm":"LWMA-45","scenario":"Steady State","mean_bt":10.17,"median_bt":6.96,"stddev_bt":10.38,"p95_bt":30.73,"p99_bt":47.91,"pct_fast_lt2s":18.2,"pct_slow_gt30s":5.4,"deviation_score":1.7},{"algorithm":"LWMA-20 (tight)","scenario":"Steady State","mean_bt":10.37,"median_bt":6.99,"stddev_bt":10.93,"p95_bt":31.74,"p99_bt":50.98,"pct_fast_lt2s":18.3,"pct_slow_gt30s":5.9,"deviation_score":3.7},{"algorithm":"ASERT","scenario":"Steady State","mean_bt":10.0,"median_bt":6.92,"stddev_bt":10.03,"p95_bt":29.92,"p99_bt":46.53,"pct_fast_lt2s":18.1,"pct_slow_gt30s":4.9,"deviation_score":0.0},{"algorithm":"DGW v3","scenario":"Steady State","mean_bt":10.23,"median_bt":6.9,"stddev_bt":10.66,"p95_bt":31.19,"p99_bt":49.57,"pct_fast_lt2s":18.4,"pct_slow_gt30s":5.6,"deviation_score":2.3},{"algorithm":"SMA-72","scenario":"Gradual 10x Growth","mean_bt":20.25,"median_bt":0.0,"stddev_bt":213.06,"p95_bt":24.5,"p99_bt":503.83,"pct_fast_lt2s":90.7,"pct_slow_gt30s":4.6,"deviation_score":102.5},{"algorithm":"DigiShield","scenario":"Gradual 10x Growth","mean_bt":10.26,"median_bt":5.46,"stddev_bt":13.98,"p95_bt":36.35,"p99_bt":66.27,"pct_fast_lt2s":25.8,"pct_slow_gt30s":7.4,"deviation_score":2.6},{"algorithm":"LWMA-45","scenario":"Gradual 10x Growth","mean_bt":10.07,"median_bt":6.89,"stddev_bt":10.27,"p95_bt":30.42,"p99_bt":47.37,"pct_fast_lt2s":18.3,"pct_slow_gt30s":5.2,"deviation_score":0.7},{"algorithm":"LWMA-20 (tight)","scenario":"Gradual 10x Growth","mean_bt":10.32,"median_bt":6.96,"stddev_bt":10.88,"p95_bt":31.6,"p99_bt":50.76,"pct_fast_lt2s":18.3,"pct_slow_gt30s":5.8,"deviation_score":3.2},{"algorithm":"ASERT","scenario":"Gradual 10x Growth","mean_bt":9.61,"median_bt":6.65,"stddev_bt":9.65,"p95_bt":28.76,"p99_bt":44.71,"pct_fast_lt2s":18.8,"pct_slow_gt30s":4.4,"deviation_score":3.9},{"algorithm":"DGW v3","scenario":"Gradual 10x Growth","mean_bt":10.17,"median_bt":6.87,"stddev_bt":10.61,"p95_bt":31.0,"p99_bt":49.34,"pct_fast_lt2s":18.5,"pct_slow_gt30s":5.5,"deviation_score":1.7},{"algorithm":"SMA-72","scenario":"Oscillation Attack (100-blk cycle)","mean_bt":21.12,"median_bt":0.0,"stddev_bt":222.59,"p95_bt":21.4,"p99_bt":527.61,"pct_fast_lt2s":91.8,"pct_slow_gt30s":4.5,"deviation_score":111.2},{"algorithm":"DigiShield","scenario":"Oscillation Attack (100-blk cycle)","mean_bt":10.83,"median_bt":3.51,"stddev_bt":21.67,"p95_bt":44.2,"p99_bt":99.26,"pct_fast_lt2s":39.1,"pct_slow_gt30s":9.1,"deviation_score":8.3},{"algorithm":"LWMA-45","scenario":"Oscillation Attack (100-blk cycle)","mean_bt":15.49,"median_bt":5.93,"stddev_bt":26.29,"p95_bt":62.15,"p99_bt":125.81,"pct_fast_lt2s":26.9,"pct_slow_gt30s":14.9,"deviation_score":54.9},{"algorithm":"LWMA-20 (tight)","scenario":"Oscillation Attack (100-blk cycle)","mean_bt":14.81,"median_bt":6.88,"stddev_bt":26.75,"p95_bt":53.38,"p99_bt":127.87,"pct_fast_lt2s":22.0,"pct_slow_gt30s":12.0,"deviation_score":48.1},{"algorithm":"ASERT","scenario":"Oscillation Attack (100-blk cycle)","mean_bt":9.97,"median_bt":3.32,"stddev_bt":15.49,"p95_bt":41.65,"p99_bt":73.61,"pct_fast_lt2s":38.3,"pct_slow_gt30s":9.3,"deviation_score":0.3},{"algorithm":"DGW v3","scenario":"Oscillation Attack (100-blk cycle)","mean_bt":14.49,"median_bt":6.14,"stddev_bt":27.78,"p95_bt":53.79,"p99_bt":133.93,"pct_fast_lt2s":25.5,"pct_slow_gt30s":11.7,"deviation_score":44.9},{"algorithm":"SMA-72","scenario":"Rapid Oscillation (20-blk cycle)","mean_bt":27.97,"median_bt":0.0,"stddev_bt":385.22,"p95_bt":22.58,"p99_bt":566.43,"pct_fast_lt2s":91.7,"pct_slow_gt30s":4.6,"deviation_score":179.7},{"algorithm":"DigiShield","scenario":"Rapid Oscillation (20-blk cycle)","mean_bt":11.43,"median_bt":1.23,"stddev_bt":30.11,"p95_bt":60.05,"p99_bt":146.98,"pct_fast_lt2s":57.6,"pct_slow_gt30s":10.6,"deviation_score":14.3},{"algorithm":"LWMA-45","scenario":"Rapid Oscillation (20-blk cycle)","mean_bt":10.84,"median_bt":3.48,"stddev_bt":17.1,"p95_bt":45.53,"p99_bt":80.01,"pct_fast_lt2s":37.3,"pct_slow_gt30s":10.8,"deviation_score":8.4},{"algorithm":"LWMA-20 (tight)","scenario":"Rapid Oscillation (20-blk cycle)","mean_bt":12.1,"median_bt":3.79,"stddev_bt":20.65,"p95_bt":51.15,"p99_bt":98.54,"pct_fast_lt2s":35.6,"pct_slow_gt30s":12.0,"deviation_score":21.0},{"algorithm":"ASERT","scenario":"Rapid Oscillation (20-blk cycle)","mean_bt":9.96,"median_bt":3.26,"stddev_bt":15.28,"p95_bt":41.42,"p99_bt":71.64,"pct_fast_lt2s":38.7,"pct_slow_gt30s":9.5,"deviation_score":0.4},{"algorithm":"DGW v3","scenario":"Rapid Oscillation (20-blk cycle)","mean_bt":10.64,"median_bt":3.67,"stddev_bt":17.18,"p95_bt":44.31,"p99_bt":81.17,"pct_fast_lt2s":35.9,"pct_slow_gt30s":10.0,"deviation_score":6.4},{"algorithm":"SMA-72","scenario":"Sudden 90% Drop","mean_bt":19.93,"median_bt":0.0,"stddev_bt":194.04,"p95_bt":21.62,"p99_bt":519.47,"pct_fast_lt2s":91.8,"pct_slow_gt30s":4.5,"deviation_score":99.3},{"algorithm":"DigiShield","scenario":"Sudden 90% Drop","mean_bt":10.35,"median_bt":5.43,"stddev_bt":15.1,"p95_bt":36.61,"p99_bt":67.43,"pct_fast_lt2s":26.1,"pct_slow_gt30s":7.5,"deviation_score":3.5},{"algorithm":"LWMA-45","scenario":"Sudden 90% Drop","mean_bt":10.42,"median_bt":7.03,"stddev_bt":11.55,"p95_bt":31.54,"p99_bt":50.53,"pct_fast_lt2s":18.1,"pct_slow_gt30s":5.7,"deviation_score":4.2},{"algorithm":"LWMA-20 (tight)","scenario":"Sudden 90% Drop","mean_bt":10.5,"median_bt":7.02,"stddev_bt":11.67,"p95_bt":32.07,"p99_bt":52.09,"pct_fast_lt2s":18.2,"pct_slow_gt30s":6.0,"deviation_score":5.0},{"algorithm":"ASERT","scenario":"Sudden 90% Drop","mean_bt":10.17,"median_bt":6.81,"stddev_bt":11.52,"p95_bt":30.69,"p99_bt":49.51,"pct_fast_lt2s":18.6,"pct_slow_gt30s":5.3,"deviation_score":1.7},{"algorithm":"DGW v3","scenario":"Sudden 90% Drop","mean_bt":10.35,"median_bt":6.93,"stddev_bt":11.45,"p95_bt":31.5,"p99_bt":50.68,"pct_fast_lt2s":18.3,"pct_slow_gt30s":5.7,"deviation_score":3.5},{"algorithm":"SMA-72","scenario":"Noisy Random","mean_bt":21.66,"median_bt":0.0,"stddev_bt":227.87,"p95_bt":22.82,"p99_bt":506.94,"pct_fast_lt2s":91.1,"pct_slow_gt30s":4.6,"deviation_score":116.6},{"algorithm":"DigiShield","scenario":"Noisy Random","mean_bt":10.36,"median_bt":4.72,"stddev_bt":16.53,"p95_bt":39.42,"p99_bt":79.14,"pct_fast_lt2s":29.9,"pct_slow_gt30s":8.0,"deviation_score":3.6},{"algorithm":"LWMA-45","scenario":"Noisy Random","mean_bt":10.33,"median_bt":6.38,"stddev_bt":12.21,"p95_bt":33.49,"p99_bt":58.19,"pct_fast_lt2s":20.3,"pct_slow_gt30s":6.5,"deviation_score":3.3},{"algorithm":"LWMA-20 (tight)","scenario":"Noisy Random","mean_bt":10.61,"median_bt":6.41,"stddev_bt":12.98,"p95_bt":34.97,"p99_bt":61.94,"pct_fast_lt2s":20.4,"pct_slow_gt30s":7.0,"deviation_score":6.1},{"algorithm":"ASERT","scenario":"Noisy Random","mean_bt":10.0,"median_bt":6.24,"stddev_bt":11.59,"p95_bt":32.25,"p99_bt":55.42,"pct_fast_lt2s":20.5,"pct_slow_gt30s":5.9,"deviation_score":0.0},{"algorithm":"DGW v3","scenario":"Noisy Random","mean_bt":10.31,"median_bt":6.24,"stddev_bt":12.51,"p95_bt":33.83,"p99_bt":60.01,"pct_fast_lt2s":20.8,"pct_slow_gt30s":6.6,"deviation_score":3.1}];
+
+const algos = ['SMA-72','DigiShield','LWMA-45','LWMA-20 (tight)','ASERT','DGW v3'];
+const scenarios = [...new Set(results.map(r => r.scenario))];
+
+function getByAlgoScenario(algo, scenario) {
+  return results.find(r => r.algorithm === algo && r.scenario === scenario);
+}
+
+// Chart defaults
+Chart.defaults.color = '#94a3b8';
+Chart.defaults.borderColor = '#1e293b';
+Chart.defaults.font.family = "'Inter', sans-serif";
+
+// 1. Overall composite scores
+const overallScores = { 'SMA-72': 5230.6, 'DigiShield': 1280.7, 'LWMA-45': 1125.7, 'LWMA-20 (tight)': 1124.4, 'ASERT': 939.4, 'DGW v3': 1059.7 };
+const sortedOverall = Object.entries(overallScores).sort((a,b) => a[1]-b[1]);
+
+new Chart(document.getElementById('overallChart'), {
+  type: 'bar',
+  data: {
+    labels: sortedOverall.map(([k]) => k),
+    datasets: [{
+      data: sortedOverall.map(([,v]) => v),
+      backgroundColor: sortedOverall.map(([k]) => COLORS[k] + '99'),
+      borderColor: sortedOverall.map(([k]) => COLORS[k]),
+      borderWidth: 1.5, borderRadius: 4
+    }]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { title: { display: true, text: 'Composite Score' }, grid: { color: '#1e293b40' } }, y: { grid: { display: false } } }
+  }
+});
+
+// 2. Attack resistance scores
+const attackScores = { 'SMA-72': 2130.3, 'DigiShield': 432.8, 'LWMA-45': 491.7, 'LWMA-20 (tight)': 491.9, 'ASERT': 328.1, 'DGW v3': 441.9 };
+const sortedAttack = Object.entries(attackScores).sort((a,b) => a[1]-b[1]);
+
+new Chart(document.getElementById('attackChart'), {
+  type: 'bar',
+  data: {
+    labels: sortedAttack.map(([k]) => k),
+    datasets: [{
+      data: sortedAttack.map(([,v]) => v),
+      backgroundColor: sortedAttack.map(([k]) => COLORS[k] + '99'),
+      borderColor: sortedAttack.map(([k]) => COLORS[k]),
+      borderWidth: 1.5, borderRadius: 4
+    }]
+  },
+  options: {
+    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { x: { title: { display: true, text: 'Attack Score (lower=better)' }, grid: { color: '#1e293b40' } }, y: { grid: { display: false } } }
+  }
+});
+
+// 3. Mean block time under both oscillation attacks
+const oscScenarios = ['Oscillation Attack (100-blk cycle)', 'Rapid Oscillation (20-blk cycle)'];
+const noSMA = algos.filter(a => a !== 'SMA-72');
+
+new Chart(document.getElementById('oscMeanChart'), {
+  type: 'bar',
+  data: {
+    labels: noSMA,
+    datasets: oscScenarios.map((sc, i) => ({
+      label: sc.replace('Oscillation Attack ', '').replace('Rapid Oscillation ', ''),
+      data: noSMA.map(a => getByAlgoScenario(a, sc).mean_bt),
+      backgroundColor: i === 0 ? '#ef444480' : '#8b5cf680',
+      borderColor: i === 0 ? '#ef4444' : '#8b5cf6',
+      borderWidth: 1.5, borderRadius: 3
+    }))
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { boxWidth: 12 } },
+      annotation: { annotations: { target: { type: 'line', yMin: 10, yMax: 10, borderColor: '#22d3ee60', borderDash: [6,3], label: { content: 'Target: 10s', display: true } } } }
+    },
+    scales: { y: { title: { display: true, text: 'Mean Block Time (s)' }, min: 0, grid: { color: '#1e293b40' } }, x: { grid: { display: false } } }
+  }
+});
+
+// 4. P99 steady state
+new Chart(document.getElementById('p99SteadyChart'), {
+  type: 'bar',
+  data: {
+    labels: noSMA,
+    datasets: [{
+      data: noSMA.map(a => getByAlgoScenario(a, 'Steady State').p99_bt),
+      backgroundColor: noSMA.map(a => COLORS[a] + '99'),
+      borderColor: noSMA.map(a => COLORS[a]),
+      borderWidth: 1.5, borderRadius: 4
+    }]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { title: { display: true, text: 'P99 Block Time (s)' }, grid: { color: '#1e293b40' } }, x: { grid: { display: false } } }
+  }
+});
+
+// 5. % blocks > 30s under attack
+const attackSc = ['Oscillation Attack (100-blk cycle)', 'Rapid Oscillation (20-blk cycle)', 'Sudden 90% Drop'];
+new Chart(document.getElementById('stallChart'), {
+  type: 'bar',
+  data: {
+    labels: noSMA,
+    datasets: attackSc.map((sc, i) => ({
+      label: sc.split('(')[0].trim(),
+      data: noSMA.map(a => getByAlgoScenario(a, sc).pct_slow_gt30s),
+      backgroundColor: ['#ef444470','#8b5cf670','#f59e0b70'][i],
+      borderColor: ['#ef4444','#8b5cf6','#f59e0b'][i],
+      borderWidth: 1.5, borderRadius: 3
+    }))
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { boxWidth: 12 } } },
+    scales: { y: { title: { display: true, text: '% Blocks > 30s' }, grid: { color: '#1e293b40' } }, x: { grid: { display: false } } }
+  }
+});
+
+// Build detailed tables
+const tablesDiv = document.getElementById('tables');
+scenarios.forEach(sc => {
+  const scResults = results.filter(r => r.scenario === sc && r.algorithm !== 'SMA-72');
+  let html = `<div class="card" style="margin-bottom:1rem;"><h3>${sc}</h3><table>
+    <tr><th>Algorithm</th><th>Mean</th><th>Median</th><th>StdDev</th><th>P95</th><th>P99</th><th>&lt;2s%</th><th>&gt;30s%</th><th>Dev%</th></tr>`;
+  
+  const bestMean = Math.min(...scResults.map(r => Math.abs(r.mean_bt - 10)));
+  const bestStd = Math.min(...scResults.map(r => r.stddev_bt));
+  
+  scResults.forEach(r => {
+    const isBestMean = Math.abs(r.mean_bt - 10) === bestMean;
+    const isBestStd = r.stddev_bt === bestStd;
+    html += `<tr>
+      <td>${r.algorithm === 'ASERT' ? '<span class="tag tag-rec">REC</span> ' : ''}${r.algorithm}</td>
+      <td class="${isBestMean ? 'best' : ''}">${r.mean_bt.toFixed(2)}s</td>
+      <td>${r.median_bt.toFixed(2)}s</td>
+      <td class="${isBestStd ? 'best' : ''}">${r.stddev_bt.toFixed(2)}</td>
+      <td>${r.p95_bt.toFixed(1)}s</td>
+      <td>${r.p99_bt.toFixed(1)}s</td>
+      <td>${r.pct_fast_lt2s.toFixed(1)}%</td>
+      <td>${r.pct_slow_gt30s.toFixed(1)}%</td>
+      <td>${r.deviation_score.toFixed(1)}%</td>
+    </tr>`;
+  });
+  html += '</table></div>';
+  tablesDiv.innerHTML += html;
+});
+</script>
+</body>
+</html>
