@@ -1,0 +1,3 @@
+The difficulty adjustment simulations run with LLMs to analyse the
+various difficulty adjustment algorithms considered for
+https://github.com/p2poolv2/p2poolv2[P2Poolv2].
